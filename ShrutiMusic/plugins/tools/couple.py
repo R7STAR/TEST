@@ -6,190 +6,234 @@ from pyrogram import filters
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from pyrogram.enums import ChatType
 from telegraph import upload_file
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 import requests
 
-from ShrutiMusic.utils import get_image, get_couple, save_couple
-from ShrutiMusic import app
+from PritiMusic.utils import get_image, get_couple, save_couple
+from PritiMusic import app
 
 
-# get current date in GMT+5:30 timezone
+# ---------------- TIME ----------------
+
 def get_today_date():
-    timezone = pytz.timezone("Asia/Kolkata")
-    now = datetime.now(timezone)
-    return now.strftime("%d/%m/%Y")
+    tz = pytz.timezone("Asia/Kolkata")
+    return datetime.now(tz).strftime("%d/%m/%Y")
 
 
-# get tomorrow's date in GMT+5:30 timezone
+def get_tomorrow_date():
+    tz = pytz.timezone("Asia/Kolkata")
+    return (datetime.now(tz) + timedelta(days=1)).strftime("%d/%m/%Y")
 
 
-def get_todmorrow_date():
-    timezone = pytz.timezone("Asia/Kolkata")
-    tomorrow = datetime.now(timezone) + timedelta(days=1)
-    return tomorrow.strftime("%d/%m/%Y")
+today = get_today_date()
+tomorrow = get_tomorrow_date()
 
 
-# Download image from URL
-
+# ---------------- DOWNLOAD IMAGE ----------------
 
 def download_image(url, path):
-    response = requests.get(url)
-    if response.status_code == 200:
-        with open(path, "wb") as f:
-            f.write(response.content)
+    try:
+        r = requests.get(url)
+        if r.status_code == 200:
+            open(path, "wb").write(r.content)
+    except:
+        pass
     return path
 
 
-# Dates
-tomorrow = get_todmorrow_date()
-today = get_today_date()
+# ---------------- SAFE PROFILE PHOTO ----------------
 
+async def safe_pfp(user_id, path):
+    try:
+        chat = await app.get_chat(user_id)
+        if chat.photo:
+            return await app.download_media(chat.photo.big_file_id, file_name=path)
+    except:
+        pass
+
+    # default pfp
+    return download_image(
+        "https://telegra.ph/file/05aa686cf52fc666184bf.jpg",
+        path
+    )
+
+
+# ---------------- GENDER DETECTOR ----------------
+
+def detect_gender(user):
+    text = f"{(user.first_name or '').lower()} {(user.username or '').lower()} {(user.bio or '').lower()}"
+
+    boy_kw = ["boy", "male", "king", "bro", "mr", "bhai", "gamer", "ladka"]
+    girl_kw = ["girl", "female", "queen", "miss", "mrs", "sis", "ladki", "cute"]
+
+    if any(k in text for k in boy_kw):
+        return "boy"
+    if any(k in text for k in girl_kw):
+        return "girl"
+
+    return random.choice(["boy", "girl"])  # fallback
+
+
+# ---------------- MAKE CIRCLE WITHOUT NAME ----------------
+
+def circle_only(base, profile_img, pos_x, pos_y):
+    size = 350
+
+    mask = Image.new("L", (size, size), 0)
+    d = ImageDraw.Draw(mask)
+    d.ellipse((0, 0, size, size), fill=255)
+
+    profile_img = profile_img.resize((size, size))
+
+    circle_img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    circle_img.paste(profile_img, (0, 0), mask)
+
+    base.paste(circle_img, (pos_x, pos_y), circle_img)
+
+
+# ---------------- TITLE TEXT ----------------
+
+def draw_title(img):
+    draw = ImageDraw.Draw(img)
+    font = ImageFont.truetype("PritiMusic/assets/GreatVibes-Regular.ttf", 120)
+    title = "Couple of the Day"
+
+    w, h = draw.textsize(title, font=font)
+    x = 1400 // 2 - w // 2
+    y = 40
+
+    draw.text((x, y), title, font=font, fill=(220, 120, 70))
+
+
+# ---------------- COUPLE COMMAND ----------------
 
 @app.on_message(filters.command(["couple", "couples"]))
-async def ctest(_, message):
-    cid = message.chat.id
-    if message.chat.type == ChatType.PRIVATE:
-        return await message.reply_text("Tʜɪs ᴄᴏᴍᴍᴀɴᴅ ᴏɴʟʏ ᴡᴏʀᴋs ɪɴ ɢʀᴏᴜᴘs.")
+async def couple_cmd(_, message):
 
-    p1_path = "downloads/pfp.png"
-    p2_path = "downloads/pfp1.png"
-    test_image_path = f"downloads/test_{cid}.png"
-    cppic_path = "downloads/cppic.png"
+    if message.chat.type == ChatType.PRIVATE:
+        return await message.reply_text("This command works only in groups!")
+
+    cid = message.chat.id
+
+    p1_path = "downloads/p1.png"
+    p2_path = "downloads/p2.png"
+    output_path = f"downloads/couple_{cid}.png"
 
     try:
-        is_selected = await get_couple(cid, today)
-        if not is_selected:
+        selected = await get_couple(cid, today)
+
+        # ---------- NEW COUPLE ----------
+        if not selected:
             msg = await message.reply_text("❣️")
-            list_of_users = []
 
-            async for i in app.get_chat_members(message.chat.id, limit=50):
-                if not i.user.is_bot and not i.user.is_deleted:
-                    list_of_users.append(i.user.id)
+            boys = []
+            girls = []
 
-            c1_id = random.choice(list_of_users)
-            c2_id = random.choice(list_of_users)
-            while c1_id == c2_id:
-                c1_id = random.choice(list_of_users)
+            async for m in app.get_chat_members(cid, limit=100):
+                u = m.user
+                if u.is_bot or u.is_deleted:
+                    continue
 
-            photo1 = (await app.get_chat(c1_id)).photo
-            photo2 = (await app.get_chat(c2_id)).photo
+                gender = detect_gender(u)
+                if gender == "boy":
+                    boys.append(u.id)
+                else:
+                    girls.append(u.id)
 
-            N1 = (await app.get_users(c1_id)).mention
-            N2 = (await app.get_users(c2_id)).mention
+            if not boys or not girls:
+                return await message.reply_text("❗ इस ग्रुप में boy या girl की कमी है।")
 
-            try:
-                p1 = await app.download_media(photo1.big_file_id, file_name=p1_path)
-            except Exception:
-                p1 = download_image(
-                    "https://telegra.ph/file/05aa686cf52fc666184bf.jpg", p1_path
-                )
-            try:
-                p2 = await app.download_media(photo2.big_file_id, file_name=p2_path)
-            except Exception:
-                p2 = download_image(
-                    "https://telegra.ph/file/05aa686cf52fc666184bf.jpg", p2_path
-                )
+            c1 = random.choice(boys)
+            c2 = random.choice(girls)
 
-            img1 = Image.open(p1)
-            img2 = Image.open(p2)
+            u1 = await app.get_users(c1)
+            u2 = await app.get_users(c2)
 
-            background_image_path = download_image(
-                "https://telegra.ph/file/96f36504f149e5680741a.jpg", cppic_path
-            )
-            img = Image.open(background_image_path)
+            N1 = u1.mention
+            N2 = u2.mention
 
-            img1 = img1.resize((437, 437))
-            img2 = img2.resize((437, 437))
+            # profile pics
+            p1 = await safe_pfp(c1, p1_path)
+            p2 = await safe_pfp(c2, p2_path)
 
-            mask = Image.new("L", img1.size, 0)
-            draw = ImageDraw.Draw(mask)
-            draw.ellipse((0, 0) + img1.size, fill=255)
+            img1 = Image.open(p1).convert("RGBA")
+            img2 = Image.open(p2).convert("RGBA")
 
-            mask1 = Image.new("L", img2.size, 0)
-            draw = ImageDraw.Draw(mask1)
-            draw.ellipse((0, 0) + img2.size, fill=255)
+            # background
+            bg = Image.new("RGBA", (1400, 900), (245, 245, 245, 255))
 
-            img1.putalpha(mask)
-            img2.putalpha(mask1)
+            draw_title(bg)
 
-            draw = ImageDraw.Draw(img)
+            # paste circles
+            circle_only(bg, img1, 200, 250)
+            circle_only(bg, img2, 850, 250)
 
-            img.paste(img1, (116, 160), img1)
-            img.paste(img2, (789, 160), img2)
-
-            img.save(test_image_path)
+            bg.save(output_path)
 
             TXT = f"""
-<b>Tᴏᴅᴀʏ's ᴄᴏᴜᴘʟᴇ ᴏғ ᴛʜᴇ ᴅᴀʏ:
+<b>Today's Couple of the Day 🎉:
 
-{N1} + {N2} = 💚
+{N1} + {N2} ❤️
 
-Nᴇxᴛ ᴄᴏᴜᴘʟᴇs ᴡɪʟʟ ʙᴇ sᴇʟᴇᴄᴛᴇᴅ ᴏɴ {tomorrow}!!</b>
-            """
+Next Couple will be selected on {tomorrow}!</b>
+"""
 
             await message.reply_photo(
-                test_image_path,
+                output_path,
                 caption=TXT,
                 reply_markup=InlineKeyboardMarkup(
-                    [
-                        [
-                            InlineKeyboardButton(
-                                text="Aᴅᴅ ᴍᴇ 🌋",
-                                url=f"https://t.me/{app.username}?startgroup=true",
-                            )
-                        ]
-                    ]
+                    [[InlineKeyboardButton("Add me 🌋", url=f"https://t.me/{app.username}?startgroup=true")]]
                 ),
             )
 
-            await msg.delete()
-            a = upload_file(test_image_path)
-            for x in a:
-                img_url = "https://graph.org/" + x
-                couple = {"c1_id": c1_id, "c2_id": c2_id}
-                await save_couple(cid, today, couple, img_url)
+            saved = upload_file(output_path)
+            img_link = "https://graph.org/" + saved[0]
 
+            couple = {"c1_id": c1, "c2_id": c2}
+            await save_couple(cid, today, couple, img_link)
+
+            await msg.delete()
+
+        # ---------- OLD COUPLE ----------
         else:
             msg = await message.reply_text("❣️")
+
+            c1 = int(selected["c1_id"])
+            c2 = int(selected["c2_id"])
+
+            u1 = await app.get_users(c1)
+            u2 = await app.get_users(c2)
+
+            N1 = u1.mention
+            N2 = u2.mention
+
             b = await get_image(cid)
-            c1_id = int(is_selected["c1_id"])
-            c2_id = int(is_selected["c2_id"])
-            c1_name = (await app.get_users(c1_id)).first_name
-            c2_name = (await app.get_users(c2_id)).first_name
 
             TXT = f"""
-<b>Tᴏᴅᴀʏ's ᴄᴏᴜᴘʟᴇ ᴏғ ᴛʜᴇ ᴅᴀʏ 🎉:
+<b>Today's Couple of the Day 🎉:
 
-[{c1_name}](tg://openmessage?user_id={c1_id}) + [{c2_name}](tg://openmessage?user_id={c2_id}) = ❣️
+{N1} + {N2} ❤️
 
-Nᴇxᴛ ᴄᴏᴜᴘʟᴇs ᴡɪʟʟ ʙᴇ sᴇʟᴇᴄᴛᴇᴅ ᴏɴ {tomorrow}!!</b>
-            """
+Next Couple will be selected on {tomorrow}!</b>
+"""
+
             await message.reply_photo(
                 b,
                 caption=TXT,
                 reply_markup=InlineKeyboardMarkup(
-                    [
-                        [
-                            InlineKeyboardButton(
-                                text="Aᴅᴅ ᴍᴇ🌋",
-                                url=f"https://t.me/{app.username}?startgroup=true",
-                            )
-                        ]
-                    ]
+                    [[InlineKeyboardButton("Add me 🌋", url=f"https://t.me/{app.username}?startgroup=true")]]
                 ),
             )
+
             await msg.delete()
 
     except Exception as e:
-        print(str(e))
+        print("Error:", e)
+
     finally:
         try:
             os.remove(p1_path)
             os.remove(p2_path)
-            os.remove(test_image_path)
-            os.remove(cppic_path)
-        except Exception as cleanup_error:
-            print(f"Error during cleanup: {cleanup_error}")
-
-
-# ❤️ Love From ShrutiBots 
+            os.remove(output_path)
+        except:
+            pass
